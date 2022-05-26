@@ -20,8 +20,8 @@ zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
 # time_till = datetime.datetime.now()
-# time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
-time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
+time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
 time_from = time_till - datetime.timedelta(hours=15)
 earliest_trigger_time = time_from + datetime.timedelta(hours=12)
 timestamp_till = int(time_till.timestamp())
@@ -55,7 +55,8 @@ host_ids = [ h['hostid'] for h in changed_hosts ]
 items = zapi.item.get(hostids=host_ids,
                       output=['hostid', 'lastclock'],
                       sortfield='itemid',
-                      filter={"name":"Software Ubuntu"}, # !!! This will NOT work everywhere, need some other filter
+                      with_triggers=True,
+                      filter={'key_': ['ubuntu.soft', 'system.sw.packages'] },
                       selectHosts=['host'])
 
 print(f"Items({len(items)}):\n", items)
@@ -68,7 +69,7 @@ history = zapi.history.get(itemids=item_ids,
                            sortorder='DESC',
                            time_from=timestamp_from,
                            time_till=timestamp_till,
-                           output=['itemid', 'clock', 'value'],
+                           output=['itemid', 'clock', 'value', 'key_'],
                            limit=len(item_ids)*2) # <- x2 here is important
 # First half of the history list should be new values, second half old ones
 new_packages = history[:len(item_ids)]
@@ -90,9 +91,13 @@ while index < len(item_ids):
     host['hostid'] = items[index]['hostid']
     host['host']   = items[index]['hosts'][0]['host']
     host['itemid'] = items[index]['itemid']
-    host['clock']  = items[index]['lastclock']
-    host['new_packages'] = set(new_packages[index]['value'].split('\n')) # Will need a different split for the centOS here
-    host['old_packages'] = set(old_packages[index]['value'].split('\n'))
+    host['clock']  = new_packages[index]['clock']
+    if items[index] == 'ubuntu.soft':
+        host['new_packages'] = set(new_packages[index]['value'].split('\n'))
+        host['old_packages'] = set(old_packages[index]['value'].split('\n'))
+    else:
+        host['new_packages'] = set( new_packages[index]['value'][6:].split(', ') ) # Assuming centOS alsways have [rpm] in front
+        host['old_packages'] = set( old_packages[index]['value'][6:].split(', ') )
     hosts.append(host)
     index += 1
 hosts.sort(key=lambda h: h['clock'], reverse=True)
@@ -161,7 +166,7 @@ def output_xlsx(filename):
             if cell.value:
                 dims[cell.column_letter] = max((dims.get(cell.column_letter, 0), len(str(cell.value)))) 
     for col, value in dims.items():
-        sheet.column_dimensions[col].width = value
+        sheet.column_dimensions[col].width = value + 5
     workbook.save(filename="output.xlsx")
 output_xlsx('output.xlsx')
 
