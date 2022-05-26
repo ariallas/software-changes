@@ -20,16 +20,12 @@ zapi.login(login, password)
 
 # Get recently fired 'Software change' triggers by trigger template ID
 triggers = zapi.trigger.get(only_true=1,
-                            filter={'templateid' : '412805' },
+                            filter={ 'templateid' : '412805' },
                             monitored=1,
                             active=1,
-                            # sortfield='lastchange',
-                            # sortorder='DESC',
                             output=['hosts', 'lastchange'],
                             selectHosts=['host'])
-print("Number of hosts with changes: ", len(triggers))
 # Compile list of hosts with software changes
-# triggers.sort(key=lambda t: t['hosts'][0]['host'])
 changed_hosts = [ t['hosts'][0] for t in triggers ]
 
 if len(triggers) == 0:
@@ -49,7 +45,6 @@ items = zapi.item.get(hostids=host_ids,
 print(f"Items({len(items)}):\n", items)
 
 # For every itemid get 2 latest values
-# This request seems kinda big brain, but should work?
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
                            history=4,
@@ -84,6 +79,7 @@ while index < len(item_ids):
     index += 1
 hosts.sort(key=lambda h: h['clock'], reverse=True)
 
+# Compile lists of new and removed software via set differences
 for host in hosts:
     installed = list(host['new_packages'] - host['old_packages'])
     removed = list(host['old_packages'] - host['new_packages'])
@@ -92,8 +88,8 @@ for host in hosts:
     host['installed'] = installed
     host['removed'] = removed
 
-# Dictionary of { list of changes : list of hosts with these changes }
-# To group up hosts with identical changes
+# Compiling a dictionary of { list of changes : list of hosts with these changes }
+# to group up hosts with identical changes
 host_groups = {}
 for host in hosts:
     key_tuple = tuple(host['installed'] + host['removed'])
@@ -101,7 +97,7 @@ for host in hosts:
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
 
-# Now output what we got
+# Output what we got
 with open('output.txt', 'w') as f:
     for key_tuple, hosts in host_groups.items():
         for host in hosts:
