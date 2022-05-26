@@ -2,6 +2,7 @@ from re import I
 from pyzabbix import ZabbixAPI
 import configparser
 from collections import defaultdict
+from openpyxl import Workbook
 import datetime
 import time
 import sys
@@ -18,9 +19,9 @@ password = config['credentials']['password']
 zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
-time_till = datetime.datetime.now()
+# time_till = datetime.datetime.now()
 # time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
+time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
 time_from = time_till - datetime.timedelta(hours=15)
 earliest_trigger_time = time_from + datetime.timedelta(hours=12)
 timestamp_till = int(time_till.timestamp())
@@ -132,8 +133,37 @@ def output_txt(filename):
             print('------------------------------------------', file=f)
 output_txt('output.txt')
 
-def output_xls(filename):
-    pass
+def output_xlsx(filename):
+    workbook = Workbook()
+    sheet = workbook.active
+
+    top_row = 1
+    for key_tuple, hosts in host_groups.items():
+        sheet.cell(row=top_row, column=2).value = 'Удалённые пакеты'
+        sheet.cell(row=top_row, column=3).value = 'Установленные пакеты'
+        row = top_row + 1
+        for host in hosts:
+            sheet.cell(row=row, column=1).value = host['host']
+            row += 1
+        row = top_row + 1
+        for package in hosts[0]['removed']:
+            sheet.cell(row=row, column=2).value = package
+            row += 1
+        row = top_row + 1
+        for package in hosts[0]['installed']:
+            sheet.cell(row=row, column=3).value = package
+            row += 1
+        top_row += max(len(hosts), len(hosts[0]['installed']), len(hosts[0]['removed'])) + 2        
+
+    dims = {}
+    for row in sheet.rows:
+        for cell in row:
+            if cell.value:
+                dims[cell.column_letter] = max((dims.get(cell.column_letter, 0), len(str(cell.value)))) 
+    for col, value in dims.items():
+        sheet.column_dimensions[col].width = value
+    workbook.save(filename="output.xlsx")
+output_xlsx('output.xlsx')
 
 for h in history:
     del h['value']
