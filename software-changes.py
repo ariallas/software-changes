@@ -17,7 +17,6 @@ password = config['credentials']['password']
 zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
-
 # Get recently fired 'Software change' triggers by trigger template ID
 triggers = zapi.trigger.get(only_true=1,
                             filter={'templateid' : '412805' },
@@ -31,12 +30,16 @@ print("Number of hosts with changes: ", len(triggers))
 # Compile list of hosts with software changes
 hosts = [ t['hosts'][0] for t in triggers ]
 
+print("Triggers:\n", triggers)
+
 # For every host get corresponding itemid for its software list
 host_ids = [ h['hostid'] for h in hosts ]
 items = zapi.item.get(hostids=host_ids,
                       output=['hostid', 'lastclock'],
                       filter={"name":"Software Ubuntu"}) # !!! This will NOT work everywhere, need some other filter
 items = sorted(items, key=lambda d: d['lastclock'], reverse=True)
+
+print("Items:\n", items)
 
 # For every itemid get 2 latest values
 # This request seems kinda big brain, but should work?
@@ -50,9 +53,6 @@ history = zapi.history.get(itemids=item_ids,
 # First half of the history list should be new values, second half old ones
 new_packages = history[:len(item_ids)]
 old_packages = history[len(item_ids):]
-
-print(hosts)
-print(items)
 
 # We have all the data, now to combine it together
 # This assumes that all the lists are sorted in the same order, which they SHOULD be
@@ -70,22 +70,51 @@ while index < len(item_ids):
     hosts[index]['old_packages'] = set(old_packages[index]['value'].split('\n'))
     index += 1
 
-# Just output what we got
+for host in hosts:
+    installed = list(host['new_packages'] - host['old_packages'])
+    removed = list(host['old_packages'] - host['new_packages'])
+    installed.sort()
+    removed.sort()
+    host['installed'] = installed
+    host['removed'] = removed
+
+# Dictionary of { list of changes : list of hosts with these changes }
+# To group up hosts with identical changes
+host_groups = {}
+for host in hosts:
+    key_tuple = tuple(host['installed'] + host['removed'])
+    if not key_tuple in host_groups.keys():
+        host_groups[key_tuple] = []
+    host_groups[key_tuple].append(host)
+
+# Now output what we got
 with open('output.txt', 'w') as f:
-    for host in hosts:
-        installed = list(host['new_packages'] - host['old_packages'])
-        removed = list(host['old_packages'] - host['new_packages'])
+    for key_tuple, hosts in host_groups.items():
+        for host in hosts:
+            print(host['host'], file=f)
+        host = hosts[0]
+        if host['installed']:
+            print("\nNew packages:", file=f)
+            for new_package in host['installed']:
+                print(new_package, file=f)
+        if host['removed']:
+            print("\nRemoved packages:", file=f)
+            for removed_package in host['removed']:
+                print(removed_package, file=f)
+        print('------------------------------------------', file=f)
 
-        f.write(host['host'] + '\n')
-        if installed:
-            f.write("New:\n")
-            for new_package in installed:
-                f.write(new_package)
-                f.write('\n')
+    # for host in hosts:
+    #     print(host['host'], file=f)
+    #     if installed:
+    #         f.write("New:\n")
+    #         for new_package in installed:
+    #             print(new_package, file=f)
+    #     if removed:
+    #         f.write("Removed:\n")
+    #         for removed_package in removed:
+    #             print(removed_package, file=f)
+    #     print('----------------------------------------------', file=f)
 
-        if removed:
-            f.write("Removed:\n")
-            for removed_package in removed:
-                f.write(removed_package)
-                f.write('\n')
-        f.write('\n')
+for h in history:
+    del h['value']
+print("History:\n", history)
