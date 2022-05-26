@@ -18,21 +18,36 @@ password = config['credentials']['password']
 zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
-# Get recently fired 'Software change' triggers by trigger template ID
-triggers = zapi.trigger.get(only_true=1,
-                            filter={ 'templateid' : '412805' },
-                            monitored=1,
-                            active=1,
-                            output=['hosts', 'lastchange'],
-                            selectHosts=['host'])
-# Compile list of hosts with software changes
-changed_hosts = [ t['hosts'][0] for t in triggers ]
+time_till = datetime.datetime.now()
+# time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
+time_from = time_till - datetime.timedelta(hours=15)
+earliest_trigger_time = time_from + datetime.timedelta(hours=12)
+timestamp_till = int(time_till.timestamp())
+timestamp_from = int(time_from.timestamp())
+timestamp_earliest_trigger_time = int(earliest_trigger_time.timestamp())
+print("Time from: ", time_from)
+print("Time till: ", time_till)
+print("Earliest trigger time: ", earliest_trigger_time)
 
-if len(triggers) == 0:
+events = zapi.event.get(time_from=timestamp_earliest_trigger_time,
+                        time_till=timestamp_till,
+                        object=0,
+                        value=1,
+                        severity=1,
+                        sortfield='clock',
+                        sortorder='DESC',
+                        output=['clock', 'objectid'],
+                        filter={'name':'Произошли изменения в пакетах, установленных в системе' },
+                        selectHosts=['host'])
+# Compile list of hosts with software changes
+changed_hosts = [ t['hosts'][0] for t in events ]
+
+if len(events) == 0:
     print("No active triggers founds")
     sys.exit()
 
-print(f"Triggers({len(triggers)}):\n", triggers)
+print(f"Triggers({len(events)}):\n", events)
 
 # For every host get corresponding itemid for its software list
 host_ids = [ h['hostid'] for h in changed_hosts ]
@@ -50,6 +65,8 @@ history = zapi.history.get(itemids=item_ids,
                            history=4,
                            sortfield='clock',
                            sortorder='DESC',
+                           time_from=timestamp_from,
+                           time_till=timestamp_till,
                            output=['itemid', 'clock', 'value'],
                            limit=len(item_ids)*2) # <- x2 here is important
 # First half of the history list should be new values, second half old ones
@@ -97,21 +114,26 @@ for host in hosts:
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
 
-# Output what we got
-with open('output.txt', 'w') as f:
-    for key_tuple, hosts in host_groups.items():
-        for host in hosts:
-            print(host['host'], file=f)
-        host = hosts[0]
-        if host['installed']:
-            print("\nNew packages:", file=f)
-            for new_package in host['installed']:
-                print(new_package, file=f)
-        if host['removed']:
-            print("\nRemoved packages:", file=f)
-            for removed_package in host['removed']:
-                print(removed_package, file=f)
-        print('------------------------------------------', file=f)
+
+def output_txt(filename):
+    with open(filename, 'w') as f:
+        for key_tuple, hosts in host_groups.items():
+            for host in hosts:
+                print(host['host'], file=f)
+            host = hosts[0]
+            if host['installed']:
+                print("\nNew packages:", file=f)
+                for new_package in host['installed']:
+                    print(new_package, file=f)
+            if host['removed']:
+                print("\nRemoved packages:", file=f)
+                for removed_package in host['removed']:
+                    print(removed_package, file=f)
+            print('------------------------------------------', file=f)
+output_txt('output.txt')
+
+def output_xls(filename):
+    pass
 
 for h in history:
     del h['value']
