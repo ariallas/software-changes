@@ -2,6 +2,7 @@ from re import I
 from pyzabbix import ZabbixAPI
 import configparser
 from collections import defaultdict
+from openpyxl import Workbook
 import datetime
 import time
 import sys
@@ -61,8 +62,7 @@ old_packages.sort(key=lambda h: h['itemid'])
 # We have all the data, now to combine it together
 # This assumes that all the lists are sorted in the same order (by itemid), which they SHOULD be
 hosts = []
-index = 0
-while index < len(item_ids):
+for index in range(len(item_ids)):
     if items[index]['itemid'] != new_packages[index]['itemid'] or \
             items[index]['itemid'] != old_packages[index]['itemid']:
         print('Lists are not sorted properly')
@@ -76,7 +76,6 @@ while index < len(item_ids):
     host['new_packages'] = set(new_packages[index]['value'].split('\n')) # Will need a different split for the centOS here
     host['old_packages'] = set(old_packages[index]['value'].split('\n'))
     hosts.append(host)
-    index += 1
 hosts.sort(key=lambda h: h['clock'], reverse=True)
 
 # Compile lists of new and removed software via set differences
@@ -112,6 +111,38 @@ with open('output.txt', 'w') as f:
             for removed_package in host['removed']:
                 print(removed_package, file=f)
         print('------------------------------------------', file=f)
+
+def output_xlsx(filename):
+    workbook = Workbook()
+    sheet = workbook.active
+
+    top_row = 1
+    for key_tuple, hosts in host_groups.items():
+        sheet.cell(row=top_row, column=2).value = 'Удалённые пакеты'
+        sheet.cell(row=top_row, column=3).value = 'Установленные пакеты'
+        row = top_row + 1
+        for host in hosts:
+            sheet.cell(row=row, column=1).value = host['host']
+            row += 1
+        row = top_row + 1
+        for package in hosts[0]['removed']:
+            sheet.cell(row=row, column=2).value = package
+            row += 1
+        row = top_row + 1
+        for package in hosts[0]['installed']:
+            sheet.cell(row=row, column=3).value = package
+            row += 1
+        top_row += max(len(hosts), len(hosts[0]['installed']), len(hosts[0]['removed'])) + 2        
+
+    dims = {}
+    for row in sheet.rows:
+        for cell in row:
+            if cell.value:
+                dims[cell.column_letter] = max((dims.get(cell.column_letter, 0), len(str(cell.value)))) 
+    for col, value in dims.items():
+        sheet.column_dimensions[col].width = value
+    workbook.save(filename="output.xlsx")
+output_xlsx('output.xlsx')
 
 for h in history:
     del h['value']
