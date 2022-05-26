@@ -19,33 +19,41 @@ password = config['credentials']['password']
 zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
-# time_till = datetime.datetime.now()
-time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
+# These are for tests
+# time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('25.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
-time_from = time_till - datetime.timedelta(hours=15)
-earliest_trigger_time = time_from + datetime.timedelta(hours=12)
+# time_till = datetime.datetime.strptime('19.05.2022 17:20', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('18.05.2022 17:20', '%d.%m.%Y %H:%M')
+
+# Initializing timestamps
+# time_tll - date for which to compile a report. Right now its only setup to do a 12 hour report
+time_till = datetime.datetime.now()
+time_from = time_till - datetime.timedelta(hours=16)
+earliest_trigger_time = time_from + datetime.timedelta(hours=12) # Earliest time for trigger event we are considering
 timestamp_till = int(time_till.timestamp())
 timestamp_from = int(time_from.timestamp())
 timestamp_earliest_trigger_time = int(earliest_trigger_time.timestamp())
-print("Time from: ", time_from)
-print("Time till: ", time_till)
-print("Earliest trigger time: ", earliest_trigger_time)
+print(f"Time from: {time_from} | Time until: {time_till}\nEarliest triger time: {earliest_trigger_time}")
 
+# Get latest software change events
 events = zapi.event.get(time_from=timestamp_earliest_trigger_time,
                         time_till=timestamp_till,
                         object=0,
                         value=1,
-                        severity=1,
+                        suppressed=False,
                         sortfield='clock',
                         sortorder='DESC',
                         output=['clock', 'objectid'],
-                        filter={'name':'Произошли изменения в пакетах, установленных в системе' },
+                        filter={'name':'Произошли изменения в пакетах, установленных в системе'},
                         selectHosts=['host'])
 # Compile list of hosts with software changes
 changed_hosts = [ t['hosts'][0] for t in events ]
 
+# Abort if no events were found
 if len(events) == 0:
-    print("No active triggers founds")
+    print("No software update events founds")
     sys.exit()
 
 print(f"Triggers({len(events)}):\n", events)
@@ -53,10 +61,10 @@ print(f"Triggers({len(events)}):\n", events)
 # For every host get corresponding itemid for its software list
 host_ids = [ h['hostid'] for h in changed_hosts ]
 items = zapi.item.get(hostids=host_ids,
-                      output=['hostid', 'lastclock'],
+                      output=['hostid', 'lastclock', 'key_'],
                       sortfield='itemid',
                       with_triggers=True,
-                      filter={'key_': ['ubuntu.soft', 'system.sw.packages'] },
+                      filter={ 'key_' : ['ubuntu.soft', 'system.sw.packages'] },
                       selectHosts=['host'])
 
 print(f"Items({len(items)}):\n", items)
@@ -69,8 +77,12 @@ history = zapi.history.get(itemids=item_ids,
                            sortorder='DESC',
                            time_from=timestamp_from,
                            time_till=timestamp_till,
-                           output=['itemid', 'clock', 'value', 'key_'],
+                           output=['itemid', 'clock', 'value'],
                            limit=len(item_ids)*2) # <- x2 here is important
+print(f"History length: {len(history)}")
+if len(history) != len(item_ids)*2:
+    print("History length less than twice the host amount, aborting")
+    sys.exit()
 # First half of the history list should be new values, second half old ones
 new_packages = history[:len(item_ids)]
 old_packages = history[len(item_ids):]
@@ -91,7 +103,7 @@ for index in range(len(item_ids)):
     host['host']   = items[index]['hosts'][0]['host']
     host['itemid'] = items[index]['itemid']
     host['clock']  = new_packages[index]['clock']
-    if items[index] == 'ubuntu.soft':
+    if items[index]['key_'] == 'ubuntu.soft':
         host['new_packages'] = set(new_packages[index]['value'].split('\n'))
         host['old_packages'] = set(old_packages[index]['value'].split('\n'))
     else:
@@ -114,11 +126,15 @@ for host in hosts:
 host_groups = {}
 for host in hosts:
     key_tuple = tuple(host['installed'] + host['removed'])
+    if not len(key_tuple):
+        continue
     if not key_tuple in host_groups.keys():
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
 
 
+
+# Output to a .txt file
 def output_txt(filename):
     with open(filename, 'w') as f:
         for key_tuple, hosts in host_groups.items():
@@ -136,14 +152,15 @@ def output_txt(filename):
             print('------------------------------------------', file=f)
 output_txt('output.txt')
 
+# Output to an .xlsx table
 def output_xlsx(filename):
     workbook = Workbook()
     sheet = workbook.active
 
     top_row = 1
     for key_tuple, hosts in host_groups.items():
-        sheet.cell(row=top_row, column=2).value = 'Удалённые пакеты'
-        sheet.cell(row=top_row, column=3).value = 'Установленные пакеты'
+        sheet.cell(row=top_row, column=2).value = 'Исходный пакет'
+        sheet.cell(row=top_row, column=3).value = 'Новая версия'
         row = top_row + 1
         for host in hosts:
             sheet.cell(row=row, column=1).value = host['host']
@@ -165,38 +182,6 @@ def output_xlsx(filename):
                 dims[cell.column_letter] = max((dims.get(cell.column_letter, 0), len(str(cell.value)))) 
     for col, value in dims.items():
         sheet.column_dimensions[col].width = value + 5
-    workbook.save(filename="output.xlsx")
-output_xlsx('output.xlsx')
-
-def output_xlsx(filename):
-    workbook = Workbook()
-    sheet = workbook.active
-
-    top_row = 1
-    for key_tuple, hosts in host_groups.items():
-        sheet.cell(row=top_row, column=2).value = 'Удалённые пакеты'
-        sheet.cell(row=top_row, column=3).value = 'Установленные пакеты'
-        row = top_row + 1
-        for host in hosts:
-            sheet.cell(row=row, column=1).value = host['host']
-            row += 1
-        row = top_row + 1
-        for package in hosts[0]['removed']:
-            sheet.cell(row=row, column=2).value = package
-            row += 1
-        row = top_row + 1
-        for package in hosts[0]['installed']:
-            sheet.cell(row=row, column=3).value = package
-            row += 1
-        top_row += max(len(hosts), len(hosts[0]['installed']), len(hosts[0]['removed'])) + 2        
-
-    dims = {}
-    for row in sheet.rows:
-        for cell in row:
-            if cell.value:
-                dims[cell.column_letter] = max((dims.get(cell.column_letter, 0), len(str(cell.value)))) 
-    for col, value in dims.items():
-        sheet.column_dimensions[col].width = value
     workbook.save(filename="output.xlsx")
 output_xlsx('output.xlsx')
 
