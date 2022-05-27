@@ -1,3 +1,4 @@
+from os import times
 from re import I
 from pyzabbix import ZabbixAPI
 import configparser
@@ -7,11 +8,14 @@ import datetime
 import time
 import sys
 
-EVENT_HOUR_DELTA = 5 # When looking for software update events, rewind this much backwards
+TRIGGER_INTERVAL = 12
+SEARCH_INTERVAL = 11
 ZABBIX_SERVER_URL = "http://10.23.210.12/zabbix"
 
 def make_timestamp(time):
     return int(time.timestamp())
+def make_datetime(timestamp):
+    return datetime.datetime.fromtimestamp(timestamp)
 
 # Read config.ini for credentials
 config = configparser.ConfigParser()
@@ -36,10 +40,9 @@ zapi.login(login, password)
 time_till = datetime.datetime.now()
 
 # Check last EVENT_HOUR_DELTA hours of software update events. Will break if there are two different trigger batches in the interval
-event_from = time_till - datetime.timedelta(hours=EVENT_HOUR_DELTA)
-# Check last 24 + EVENT_HOUR_DELTA hours of item history. 12 + EVENT_HOUR_DELTA would be fine if metric update is always 12 hours
-history_from = time_till - datetime.timedelta(hours=24 + EVENT_HOUR_DELTA)
-print(f"Event from: {event_from} | Time until: {time_till}\nHistory from: {history_from}")
+event_from = time_till - datetime.timedelta(hours=SEARCH_INTERVAL)
+# history_from = time_till - datetime.timedelta(hours=24) #+ EVENT_HOUR_DELTA)
+print(f"Event from: {event_from} | Time until: {time_till}")
 
 # Get latest software change events
 events = zapi.event.get(time_from=make_timestamp(event_from),
@@ -49,9 +52,10 @@ events = zapi.event.get(time_from=make_timestamp(event_from),
                         suppressed=False,
                         sortfield='clock',
                         sortorder='DESC',
-                        output=['clock', 'objectid'],
+                        # output=['clock', 'objectid'],
                         filter={'name':'Произошли изменения в пакетах, установленных в системе'},
                         selectHosts=['host'])
+event_time = make_datetime(int(events[0]['clock']))
 # List of hosts with software changes
 changed_hosts = [ t['hosts'][0] for t in events ]
 
@@ -60,7 +64,7 @@ if len(events) == 0:
     print("No software update events founds")
     sys.exit()
 
-print(f"Triggers({len(events)}):\n", events)
+print(f"Events({len(events)}):\n", events)
 
 # For every host get corresponding itemid for its software list
 host_ids = [ h['hostid'] for h in changed_hosts ]
@@ -74,13 +78,14 @@ items = zapi.item.get(hostids=host_ids,
 print(f"Items({len(items)}):\n", items)
 
 # For every itemid get 2 latest values
+history_from = event_time - datetime.timedelta(hours=TRIGGER_INTERVAL + 1)
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
                            history=4,
                            sortfield='clock',
                            sortorder='DESC',
                            time_from=make_timestamp(history_from),
-                           time_till=make_timestamp(time_till),
+                           time_till=make_timestamp(event_time),
                            output=['itemid', 'clock', 'value'],
                            limit=len(item_ids)*2) # <- x2 here is important
 print(f"History length: {len(history)}")
