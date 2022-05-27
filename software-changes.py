@@ -7,7 +7,6 @@ import datetime
 import time
 import sys
 
-
 EVENT_HOUR_DELTA = 5 # When looking for software update events, rewind this much backwards
 ZABBIX_SERVER_URL = "http://10.23.210.12/zabbix"
 
@@ -25,7 +24,7 @@ zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
 # These are for tests
-time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('25.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
@@ -34,7 +33,7 @@ time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 
 # Initializing timestamps
 # time_tll - date for which to compile a report. Right now its only setup to do a 12 hour interval
-# time_till = datetime.datetime.now()
+time_till = datetime.datetime.now()
 
 # Check last EVENT_HOUR_DELTA hours of software update events. Will break if there are two different trigger batches in the interval
 event_from = time_till - datetime.timedelta(hours=EVENT_HOUR_DELTA)
