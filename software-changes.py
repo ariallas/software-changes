@@ -7,7 +7,12 @@ import datetime
 import time
 import sys
 
+
+EVENT_HOUR_DELTA = 5 # When looking for software update events, rewind this much backwards
 ZABBIX_SERVER_URL = "http://10.23.210.12/zabbix"
+
+def make_timestamp(time):
+    return int(time.timestamp())
 
 # Read config.ini for credentials
 config = configparser.ConfigParser()
@@ -20,7 +25,7 @@ zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
 # These are for tests
-# time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
+time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('25.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
@@ -29,17 +34,17 @@ zapi.login(login, password)
 
 # Initializing timestamps
 # time_tll - date for which to compile a report. Right now its only setup to do a 12 hour interval
-time_till = datetime.datetime.now()
-time_from = time_till - datetime.timedelta(hours=15)
-earliest_trigger_time = time_from + datetime.timedelta(hours=12) # Earliest time for trigger event we are considering
-timestamp_till = int(time_till.timestamp())
-timestamp_from = int(time_from.timestamp())
-timestamp_earliest_trigger_time = int(earliest_trigger_time.timestamp())
-print(f"Time from: {time_from} | Time until: {time_till}\nEarliest triger time: {earliest_trigger_time}")
+# time_till = datetime.datetime.now()
+
+# Check last EVENT_HOUR_DELTA hours of software update events. Will break if there are two different trigger batches in the interval
+event_from = time_till - datetime.timedelta(hours=EVENT_HOUR_DELTA)
+# Check last 24 + EVENT_HOUR_DELTA hours of item history. 12 + EVENT_HOUR_DELTA would be fine if metric update is always 12 hours
+history_from = time_till - datetime.timedelta(hours=24 + EVENT_HOUR_DELTA)
+print(f"Event from: {event_from} | Time until: {time_till}\nHistory from: {history_from}")
 
 # Get latest software change events
-events = zapi.event.get(time_from=timestamp_earliest_trigger_time,
-                        time_till=timestamp_till,
+events = zapi.event.get(time_from=make_timestamp(event_from),
+                        time_till=make_timestamp(time_till),
                         object=0,
                         value=1,
                         suppressed=False,
@@ -75,8 +80,8 @@ history = zapi.history.get(itemids=item_ids,
                            history=4,
                            sortfield='clock',
                            sortorder='DESC',
-                           time_from=timestamp_from,
-                           time_till=timestamp_till,
+                           time_from=make_timestamp(history_from),
+                           time_till=make_timestamp(time_till),
                            output=['itemid', 'clock', 'value'],
                            limit=len(item_ids)*2) # <- x2 here is important
 print(f"History length: {len(history)}")
@@ -95,7 +100,7 @@ old_packages.sort(key=lambda h: h['itemid'])
 hosts = []
 for index in range(len(item_ids)):
     if items[index]['itemid'] != new_packages[index]['itemid'] or \
-            items[index]['itemid'] != old_packages[index]['itemid']:
+       items[index]['itemid'] != old_packages[index]['itemid']:
         print('Lists are not sorted properly')
         print(items[index]['itemid'], new_packages[index]['itemid'], old_packages[index]['itemid'])
         sys.exit()
@@ -120,7 +125,7 @@ for host in hosts:
     installed.sort()
     removed.sort()
     host['installed'] = installed
-    host['removed'] = removed
+    host['removed']   = removed
 
 # Compiling a dictionary of { list of changes : list of hosts with these changes }
 # to group up hosts with identical changes
