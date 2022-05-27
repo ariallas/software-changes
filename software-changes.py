@@ -28,9 +28,9 @@ zapi.login(login, password)
 # time_till = datetime.datetime.strptime('18.05.2022 17:20', '%d.%m.%Y %H:%M')
 
 # Initializing timestamps
-# time_tll - date for which to compile a report. Right now its only setup to do a 12 hour report
+# time_tll - date for which to compile a report. Right now its only setup to do a 12 hour interval
 time_till = datetime.datetime.now()
-time_from = time_till - datetime.timedelta(hours=16)
+time_from = time_till - datetime.timedelta(hours=15)
 earliest_trigger_time = time_from + datetime.timedelta(hours=12) # Earliest time for trigger event we are considering
 timestamp_till = int(time_till.timestamp())
 timestamp_from = int(time_from.timestamp())
@@ -48,7 +48,7 @@ events = zapi.event.get(time_from=timestamp_earliest_trigger_time,
                         output=['clock', 'objectid'],
                         filter={'name':'Произошли изменения в пакетах, установленных в системе'},
                         selectHosts=['host'])
-# Compile list of hosts with software changes
+# List of hosts with software changes
 changed_hosts = [ t['hosts'][0] for t in events ]
 
 # Abort if no events were found
@@ -86,6 +86,7 @@ if len(history) != len(item_ids)*2:
 # First half of the history list should be new values, second half old ones
 new_packages = history[:len(item_ids)]
 old_packages = history[len(item_ids):]
+# Sort them by itemid, so they are sorted the same way as items list
 new_packages.sort(key=lambda h: h['itemid'])
 old_packages.sort(key=lambda h: h['itemid'])
 
@@ -115,7 +116,7 @@ hosts.sort(key=lambda h: h['clock'], reverse=True)
 # Compile lists of new and removed software via set differences
 for host in hosts:
     installed = list(host['new_packages'] - host['old_packages'])
-    removed = list(host['old_packages'] - host['new_packages'])
+    removed   = list(host['old_packages'] - host['new_packages'])
     installed.sort()
     removed.sort()
     host['installed'] = installed
