@@ -8,8 +8,8 @@ import datetime
 import time
 import sys
 
-TRIGGER_INTERVAL = 12
 SEARCH_INTERVAL = 11
+TRIGGER_INTERVAL = 12
 ZABBIX_SERVER_URL = "http://10.23.210.12/zabbix"
 
 def make_timestamp(time):
@@ -27,17 +27,18 @@ password = config['credentials']['password']
 zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
+# Initializing timestamps
+# time_tll - date for which to compile a report. Right now its only setup to do a 12 hour interval
+time_till = datetime.datetime.now()
+
 # These are for tests
+# time_till = datetime.datetime.strptime('27.05.2022 20:10', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('25.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('19.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('18.05.2022 17:20', '%d.%m.%Y %H:%M')
-
-# Initializing timestamps
-# time_tll - date for which to compile a report. Right now its only setup to do a 12 hour interval
-time_till = datetime.datetime.now()
 
 # Check last EVENT_HOUR_DELTA hours of software update events. Will break if there are two different trigger batches in the interval
 event_from = time_till - datetime.timedelta(hours=SEARCH_INTERVAL)
@@ -52,10 +53,9 @@ events = zapi.event.get(time_from=make_timestamp(event_from),
                         suppressed=False,
                         sortfield='clock',
                         sortorder='DESC',
-                        # output=['clock', 'objectid'],
+                        output=['clock', 'objectid'],
                         filter={'name':'Произошли изменения в пакетах, установленных в системе'},
                         selectHosts=['host'])
-event_time = make_datetime(int(events[0]['clock']))
 # List of hosts with software changes
 changed_hosts = [ t['hosts'][0] for t in events ]
 
@@ -63,6 +63,7 @@ changed_hosts = [ t['hosts'][0] for t in events ]
 if len(events) == 0:
     print("No software update events founds")
     sys.exit()
+event_time = make_datetime(int(events[0]['clock']))
 
 print(f"Events({len(events)}):\n", events)
 
