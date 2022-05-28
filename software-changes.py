@@ -1,11 +1,7 @@
-from os import times
-from re import I
 from pyzabbix import ZabbixAPI
 import configparser
-from collections import defaultdict
 from openpyxl import Workbook
 import datetime
-import time
 import sys
 
 SEARCH_INTERVAL = 11
@@ -32,7 +28,7 @@ zapi.login(login, password)
 time_till = datetime.datetime.now()
 
 # These are for tests
-# time_till = datetime.datetime.strptime('27.05.2022 20:10', '%d.%m.%Y %H:%M')
+time_till = datetime.datetime.strptime('27.05.2022 10:10', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('25.05.2022 17:20', '%d.%m.%Y %H:%M')
@@ -80,22 +76,23 @@ print(f"Items({len(items)}):\n", items)
 
 # For every itemid get 2 latest values
 history_from = event_time - datetime.timedelta(hours=TRIGGER_INTERVAL + 1)
+print(f"Searching for history items from: {history_from} to {event_time}")
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
                            history=4,
                            sortfield='clock',
                            sortorder='DESC',
                            time_from=make_timestamp(history_from),
-                           time_till=make_timestamp(event_time),
-                           output=['itemid', 'clock', 'value'],
-                           limit=len(item_ids)*2) # <- x2 here is important
+                           time_till=make_timestamp(event_time) + 1000,
+                           output=['itemid', 'clock', 'value'])
+                           # limit=len(item_ids)*2)
 print(f"History length: {len(history)}")
-if len(history) != len(item_ids)*2:
-    print("History length less than twice the host amount, aborting")
+if len(history) < len(item_ids):
+    print("History length is less than amount of hosts")
     sys.exit()
-# First half of the history list should be new values, second half old ones
+# First batch of history results are newest software list, last batch is the oldest one. Ignoring everything inbetween
 new_packages = history[:len(item_ids)]
-old_packages = history[len(item_ids):]
+old_packages = history[-len(item_ids):]
 # Sort them by itemid, so they are sorted the same way as items list
 new_packages.sort(key=lambda h: h['itemid'])
 old_packages.sort(key=lambda h: h['itemid'])
