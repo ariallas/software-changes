@@ -4,7 +4,7 @@ from openpyxl import Workbook
 import datetime
 import sys
 
-SEARCH_INTERVAL = 11
+SEARCH_INTERVAL = 13
 TRIGGER_INTERVAL = 12
 ZABBIX_SERVER_URL = "http://10.23.210.12/zabbix"
 
@@ -28,8 +28,8 @@ zapi.login(login, password)
 time_till = datetime.datetime.now()
 
 # These are for tests
-time_till = datetime.datetime.strptime('27.05.2022 10:10', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('27.05.2022 10:10', '%d.%m.%Y %H:%M')
+time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('25.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
@@ -59,12 +59,14 @@ changed_hosts = [ t['hosts'][0] for t in events ]
 if len(events) == 0:
     print("No software update events founds")
     sys.exit()
-event_time = make_datetime(int(events[0]['clock']))
+latest_event_time = make_datetime(int(events[0]['clock']))
+oldest_event_time = make_datetime(int(events[-1]['clock']))
 
 print(f"Events({len(events)}):\n", events)
 
 # For every host get corresponding itemid for its software list
 host_ids = [ h['hostid'] for h in changed_hosts ]
+host_ids = list(set(host_ids)) # Remove duplicates
 items = zapi.item.get(hostids=host_ids,
                       output=['hostid', 'lastclock', 'key_'],
                       sortfield='itemid',
@@ -75,15 +77,15 @@ items = zapi.item.get(hostids=host_ids,
 print(f"Items({len(items)}):\n", items)
 
 # For every itemid get 2 latest values
-history_from = event_time - datetime.timedelta(hours=TRIGGER_INTERVAL + 1)
-print(f"Searching for history items from: {history_from} to {event_time}")
+history_from = oldest_event_time - datetime.timedelta(hours=TRIGGER_INTERVAL + 1)
+print(f"Searching for history items from: {history_from} to {latest_event_time}")
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
                            history=4,
                            sortfield='clock',
                            sortorder='DESC',
                            time_from=make_timestamp(history_from),
-                           time_till=make_timestamp(event_time) + 1000,
+                           time_till=make_timestamp(latest_event_time) + 1000,
                            output=['itemid', 'clock', 'value'])
                            # limit=len(item_ids)*2)
 print(f"History length: {len(history)}")
@@ -114,11 +116,12 @@ for index in range(len(item_ids)):
     if items[index]['key_'] == 'ubuntu.soft':
         host['new_packages'] = set(new_packages[index]['value'].split('\n'))
         host['old_packages'] = set(old_packages[index]['value'].split('\n'))
-    else:
-        host['new_packages'] = set( new_packages[index]['value'][6:].split(', ') ) # Assuming centOS alsways have [rpm] in front
+    else:                      # Assuming centOS alsways have [rpm] in front
+        host['new_packages'] = set( new_packages[index]['value'][6:].split(', ') )
         host['old_packages'] = set( old_packages[index]['value'][6:].split(', ') )
     hosts.append(host)
-hosts.sort(key=lambda h: h['clock'], reverse=True)
+# hosts.sort(key=lambda h: h['clock'], reverse=True) # This sorts the same way as in Zabbix
+hosts.sort(key=lambda h: h['host'])
 
 # Compile lists of new and removed software via set differences
 for host in hosts:
@@ -135,11 +138,11 @@ host_groups = {}
 for host in hosts:
     key_tuple = tuple(host['installed'] + host['removed'])
     if not len(key_tuple):
+        print(f"No changes found for host {host['host']}")
         continue
     if not key_tuple in host_groups.keys():
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
-
 
 
 # Output to a .txt file
