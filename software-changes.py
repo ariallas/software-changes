@@ -4,8 +4,8 @@ from openpyxl import Workbook
 import datetime
 import sys
 
-SEARCH_INTERVAL = 13
-TRIGGER_INTERVAL = 12
+SEARCH_INTERVAL = 24 # Interval for searching trigger events
+TRIGGER_INTERVAL = 12 # Interval of the software list metric update
 ZABBIX_SERVER_URL = "http://10.23.210.12/zabbix"
 
 def make_timestamp(time):
@@ -23,23 +23,22 @@ password = config['credentials']['password']
 zapi = ZabbixAPI(ZABBIX_SERVER_URL)
 zapi.login(login, password)
 
-# Initializing timestamps
-# time_tll - date for which to compile a report. Right now its only setup to do a 12 hour interval
+# Date from which to start searching for trigger events (backwards in time)
 time_till = datetime.datetime.now()
 
 # These are for tests
+# time_till = datetime.datetime.strptime('28.05.2022 10:10', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('27.05.2022 10:10', '%d.%m.%Y %H:%M')
-time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('25.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('19.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('18.05.2022 17:20', '%d.%m.%Y %H:%M')
 
-# Check last EVENT_HOUR_DELTA hours of software update events. Will break if there are two different trigger batches in the interval
+# Search for events starting from this time
 event_from = time_till - datetime.timedelta(hours=SEARCH_INTERVAL)
-# history_from = time_till - datetime.timedelta(hours=24) #+ EVENT_HOUR_DELTA)
-print(f"Event from: {event_from} | Time until: {time_till}")
+print(f"Events from: {event_from} | Till: {time_till}")
 
 # Get latest software change events
 events = zapi.event.get(time_from=make_timestamp(event_from),
@@ -59,6 +58,8 @@ changed_hosts = [ t['hosts'][0] for t in events ]
 if len(events) == 0:
     print("No software update events founds")
     sys.exit()
+
+# Latest and oldest event timestamps
 latest_event_time = make_datetime(int(events[0]['clock']))
 oldest_event_time = make_datetime(int(events[-1]['clock']))
 
@@ -76,7 +77,7 @@ items = zapi.item.get(hostids=host_ids,
 
 print(f"Items({len(items)}):\n", items)
 
-# For every itemid get 2 latest values
+# For every itemid get its value history
 history_from = oldest_event_time - datetime.timedelta(hours=TRIGGER_INTERVAL + 1)
 print(f"Searching for history items from: {history_from} to {latest_event_time}")
 item_ids = [ i['itemid'] for i in items ]
@@ -87,11 +88,11 @@ history = zapi.history.get(itemids=item_ids,
                            time_from=make_timestamp(history_from),
                            time_till=make_timestamp(latest_event_time) + 1000,
                            output=['itemid', 'clock', 'value'])
-                           # limit=len(item_ids)*2)
 print(f"History length: {len(history)}")
 if len(history) < len(item_ids):
     print("History length is less than amount of hosts")
     sys.exit()
+
 # First batch of history results are newest software list, last batch is the oldest one. Ignoring everything inbetween
 new_packages = history[:len(item_ids)]
 old_packages = history[-len(item_ids):]
@@ -127,13 +128,10 @@ hosts.sort(key=lambda h: h['host'])
 for host in hosts:
     installed = list(host['new_packages'] - host['old_packages'])
     removed   = list(host['old_packages'] - host['new_packages'])
-    installed.sort()
-    removed.sort()
-    host['installed'] = installed
-    host['removed']   = removed
+    host['installed'] = sorted(installed)
+    host['removed']   = sorted(removed)
 
-# Compiling a dictionary of { list of changes : list of hosts with these changes }
-# to group up hosts with identical changes
+# Compiling a dictionary to group up hosts with identical changes
 host_groups = {}
 for host in hosts:
     key_tuple = tuple(host['installed'] + host['removed'])
