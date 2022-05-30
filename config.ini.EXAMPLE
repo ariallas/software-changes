@@ -1,6 +1,6 @@
 [credentials]
-login=abc
-password=123
+login=zabbix_login
+password=zabbix_password
 
 [params]
 zabbix_server_url=http://10.23.210.12/zabbix
