@@ -1,6 +1,7 @@
 from pyzabbix import ZabbixAPI
 from openpyxl import Workbook
 from openpyxl.styles.borders import Border, Side
+from argparse import ArgumentParser
 import configparser
 import datetime
 import sys
@@ -8,66 +9,48 @@ import sys
 def make_timestamp(time):     return int(time.timestamp())
 def make_datetime(timestamp): return datetime.datetime.fromtimestamp(timestamp)
 def format_date(date):        return date.strftime('%d.%m %H:%M')
+def parse_date(str):          return datetime.datetime.strptime(str, '%d.%m.%Y %H:%M')
 
-# Read config.ini for credentials and search settings
+# Read CMD arguments
+parser = ArgumentParser()
+parser.add_argument('group_id',  type=str, help='Zabbix group ID')
+parser.add_argument('date_from', type=str, help='Start searching from this date')
+parser.add_argument('date_till', type=str, help='Search till this date')
+args = parser.parse_args()
+
+try:
+    group_id = args.group_id
+    date_till = parse_date(args.date_till)
+    date_from = parse_date(args.date_from)
+    pass
+except ValueError as e:
+    print(e)
+    print("Date must be in DD.MM.YYYY HH:MM format")
+    sys.exit()
+
+# Read config.ini for credentials
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
 login = config['credentials']['login']
 password = config['credentials']['password']
-
 zabbix_server_url = config['params']['zabbix_server_url']
-search_interval   = config.getint('params', 'search_interval')
-metric_interval  = config.getint('params', 'metric_interval')
 
 # Inialize API access
 zapi = ZabbixAPI(zabbix_server_url)
 zapi.login(login, password)
 
-# Date from which to start searching for trigger events (backwards in time)
-time_till = datetime.datetime.now()
+hosts = zapi.host.get(groupids=group_id,
+                      output=['hostid'],
+                      monitored_hosts=True)
+print(f"Hosts with groupid {group_id} found: {len(hosts)}")
 
-# These are for tests
-# time_till = datetime.datetime.strptime('28.05.2022 10:10', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('27.05.2022 10:10', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('25.05.2022 17:20', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('24.05.2022 17:20', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('19.05.2022 17:20', '%d.%m.%Y %H:%M')
-# time_till = datetime.datetime.strptime('18.05.2022 17:20', '%d.%m.%Y %H:%M')
-
-# Search for events starting from this time
-event_from = time_till - datetime.timedelta(hours=search_interval)
-print(f"Searching for trigger events from {format_date(event_from)} to {format_date(time_till)}")
-
-# Get latest software change events
-events = zapi.event.get(time_from=make_timestamp(event_from),
-                        time_till=make_timestamp(time_till),
-                        object=0,
-                        value=1,
-                        suppressed=False,
-                        sortfield='clock',
-                        sortorder='DESC',
-                        output=['clock', 'objectid'],
-                        filter={'name':'Произошли изменения в пакетах, установленных в системе'},
-                        selectHosts=['host'])
-# List of hosts with software changes
-changed_hosts = [ t['hosts'][0] for t in events ]
-
-# Abort if no events were found
-if len(events) == 0:
-    print("No software update events founds")
+# Abort if no hosts were found
+if len(hosts) == 0:
+    print("No hosts were founds")
     sys.exit()
 
-# Latest and oldest event timestamps, will be the same if its only one batch
-latest_event_time = make_datetime(int(events[0]['clock']))
-oldest_event_time = make_datetime(int(events[-1]['clock']))
-
 # For every host get corresponding itemid for its software list
-host_ids = [ h['hostid'] for h in changed_hosts ]
-host_ids = list(set(host_ids)) # Remove duplicate hosts
-print(f"Alert count: {len(events)}    Unique hosts count: {len(host_ids)}")
-
+host_ids = [ h['hostid'] for h in hosts ]
 items = zapi.item.get(hostids=host_ids,
                       output=['hostid', 'lastclock', 'key_'],
                       sortfield='itemid',
@@ -76,15 +59,14 @@ items = zapi.item.get(hostids=host_ids,
                       selectHosts=['host'])
 
 # For every itemid get its value history
-history_from = oldest_event_time - datetime.timedelta(hours=metric_interval + 1)
-print(f"Searching for history items from {format_date(history_from)} to {format_date(latest_event_time)}")
+print(f"Searching for history items from {format_date(date_from)} to {format_date(date_till)}")
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
                            history=4,
                            sortfield='clock',
                            sortorder='DESC',
-                           time_from=make_timestamp(history_from),
-                           time_till=make_timestamp(latest_event_time) + 1000,
+                           time_from=make_timestamp(date_from),
+                           time_till=make_timestamp(date_till),
                            output=['itemid', 'clock', 'value'])
 print(f"History length: {len(history)}")
 if len(history) < len(item_ids):
@@ -119,7 +101,6 @@ for index in range(len(item_ids)):
         host['new_packages'] = set( new_packages[index]['value'][6:].split(', ') )
         host['old_packages'] = set( old_packages[index]['value'][6:].split(', ') )
     hosts.append(host)
-# hosts.sort(key=lambda h: h['clock'], reverse=True) # This sorts the same way as in Zabbix
 hosts.sort(key=lambda h: h['host'])
 
 # Compile lists of new and removed software via set differences
@@ -133,14 +114,9 @@ for host in hosts:
 host_groups = {}
 for host in hosts:
     key_tuple = tuple(host['installed'] + host['removed'])
-    if not len(key_tuple):
-        print(f"No changes found for host {host['host']}")
-        continue
     if not key_tuple in host_groups.keys():
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
-
-print(f"Изменение ПО в ВИФИД {latest_event_time.strftime('%d.%m')} за последние 24 часа")
 
 
 # Output to a .txt file
