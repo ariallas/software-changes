@@ -3,11 +3,18 @@ from openpyxl import Workbook
 from openpyxl.styles.borders import Border, Side
 import configparser
 import datetime
+import pathlib
 import sys
 
 def make_timestamp(time):     return int(time.timestamp())
 def make_datetime(timestamp): return datetime.datetime.fromtimestamp(timestamp)
 def format_date(date):        return date.strftime('%d.%m %H:%M')
+
+# Delete previous reports if they exist
+file = pathlib.Path("report.txt", missing_ok=True)
+if file.is_file(): file.unlink()
+file = pathlib.Path("report.xlsx", missing_ok=True)
+if file.is_file(): file.unlink()
 
 # Read config.ini for credentials and search settings
 config = configparser.ConfigParser()
@@ -17,7 +24,7 @@ password = config['credentials']['password']
 
 zabbix_server_url = config['params']['zabbix_server_url']
 search_interval   = config.getint('params', 'search_interval')
-metric_interval  = config.getint('params', 'metric_interval')
+metric_interval   = config.getint('params', 'metric_interval')
 
 # Inialize API access
 zapi = ZabbixAPI(zabbix_server_url)
@@ -56,7 +63,7 @@ changed_hosts = [ t['hosts'][0] for t in events ]
 
 # Abort if no events were found
 if len(events) == 0:
-    print("No software update events founds")
+    print("Completed succesfully: No software update events found")
     sys.exit()
 
 # Latest and oldest event timestamps, will be the same if its only one batch
@@ -88,7 +95,7 @@ history = zapi.history.get(itemids=item_ids,
                            output=['itemid', 'clock', 'value'])
 print(f"History length: {len(history)}")
 if len(history) < len(item_ids):
-    print("History length is less than amount of hosts")
+    print("Error: History length is less than amount of hosts, aborting")
     sys.exit()
 
 # First batch of history results are newest software list, last batch is the oldest one. Ignoring everything inbetween
@@ -104,7 +111,7 @@ hosts = []
 for index in range(len(item_ids)):
     if items[index]['itemid'] != new_packages[index]['itemid'] or \
        items[index]['itemid'] != old_packages[index]['itemid']:
-        print('Lists are not sorted properly')
+        print('Error: Lists are not sorted properly, aborting')
         print(items[index]['itemid'], new_packages[index]['itemid'], old_packages[index]['itemid'])
         sys.exit()
     host = {}
@@ -139,8 +146,6 @@ for host in hosts:
     if not key_tuple in host_groups.keys():
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
-
-print(f"Изменение ПО в ВИФИД {latest_event_time.strftime('%d.%m')} за последние 24 часа")
 
 
 # Output to a .txt file
@@ -206,3 +211,6 @@ def output_xlsx(filename):
         sheet.column_dimensions[col].width = value + 5
     workbook.save(filename=filename)
 output_xlsx('report.xlsx')
+
+print("Completed succesfully")
+print(f"Изменение ПО в ВИФИД {latest_event_time.strftime('%d.%m')} за последние 24 часа")
