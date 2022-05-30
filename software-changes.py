@@ -1,26 +1,26 @@
 from pyzabbix import ZabbixAPI
-import configparser
 from openpyxl import Workbook
+from openpyxl.styles.borders import Border, Side
+import configparser
 import datetime
 import sys
 
-SEARCH_INTERVAL = 24 # Interval for searching trigger events
-TRIGGER_INTERVAL = 12 # Interval of the software list metric update
-ZABBIX_SERVER_URL = "http://10.23.210.12/zabbix"
+def make_timestamp(time):     return int(time.timestamp())
+def make_datetime(timestamp): return datetime.datetime.fromtimestamp(timestamp)
+def format_date(date):        return date.strftime('%d.%m %H:%M')
 
-def make_timestamp(time):
-    return int(time.timestamp())
-def make_datetime(timestamp):
-    return datetime.datetime.fromtimestamp(timestamp)
-
-# Read config.ini for credentials
+# Read config.ini for credentials and search settings
 config = configparser.ConfigParser()
 config.read('config.ini', encoding='utf-8')
 login = config['credentials']['login']
 password = config['credentials']['password']
 
+zabbix_server_url = config['params']['zabbix_server_url']
+search_interval   = config.getint('params', 'search_interval')
+metric_interval  = config.getint('params', 'metric_interval')
+
 # Inialize API access
-zapi = ZabbixAPI(ZABBIX_SERVER_URL)
+zapi = ZabbixAPI(zabbix_server_url)
 zapi.login(login, password)
 
 # Date from which to start searching for trigger events (backwards in time)
@@ -37,8 +37,8 @@ time_till = datetime.datetime.now()
 # time_till = datetime.datetime.strptime('18.05.2022 17:20', '%d.%m.%Y %H:%M')
 
 # Search for events starting from this time
-event_from = time_till - datetime.timedelta(hours=SEARCH_INTERVAL)
-print(f"Events from: {event_from} | Till: {time_till}")
+event_from = time_till - datetime.timedelta(hours=search_interval)
+print(f"Searching for trigger events from {format_date(event_from)} to {format_date(time_till)}")
 
 # Get latest software change events
 events = zapi.event.get(time_from=make_timestamp(event_from),
@@ -59,15 +59,15 @@ if len(events) == 0:
     print("No software update events founds")
     sys.exit()
 
-# Latest and oldest event timestamps
+# Latest and oldest event timestamps, will be the same if its only one batch
 latest_event_time = make_datetime(int(events[0]['clock']))
 oldest_event_time = make_datetime(int(events[-1]['clock']))
 
-print(f"Events({len(events)}):\n", events)
-
 # For every host get corresponding itemid for its software list
 host_ids = [ h['hostid'] for h in changed_hosts ]
-host_ids = list(set(host_ids)) # Remove duplicates
+host_ids = list(set(host_ids)) # Remove duplicate hosts
+print(f"Alert count: {len(events)}    Unique hosts count: {len(host_ids)}")
+
 items = zapi.item.get(hostids=host_ids,
                       output=['hostid', 'lastclock', 'key_'],
                       sortfield='itemid',
@@ -75,11 +75,9 @@ items = zapi.item.get(hostids=host_ids,
                       filter={ 'key_' : ['ubuntu.soft', 'system.sw.packages'] },
                       selectHosts=['host'])
 
-print(f"Items({len(items)}):\n", items)
-
 # For every itemid get its value history
-history_from = oldest_event_time - datetime.timedelta(hours=TRIGGER_INTERVAL + 1)
-print(f"Searching for history items from: {history_from} to {latest_event_time}")
+history_from = oldest_event_time - datetime.timedelta(hours=metric_interval + 1)
+print(f"Searching for history items from {format_date(history_from)} to {format_date(latest_event_time)}")
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
                            history=4,
@@ -142,6 +140,8 @@ for host in hosts:
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
 
+print(f"Изменение ПО в ВИФИД {latest_event_time.strftime('%d.%m')} за последние 24 часа")
+
 
 # Output to a .txt file
 def output_txt(filename):
@@ -159,17 +159,28 @@ def output_txt(filename):
                 for removed_package in host['removed']:
                     print(removed_package, file=f)
             print('------------------------------------------', file=f)
-output_txt('output.txt')
+output_txt('report.txt')
 
 # Output to an .xlsx table
 def output_xlsx(filename):
+    def set_border(ws, cell_range, bottom_row, top_row):
+        thin = Side(border_style="thin", color="000000")
+        for row in ws[cell_range]:
+            for cell in row:
+                if cell.row == bottom_row:
+                    cell.border += Border(top=thin)
+                if cell.row in (top_row, bottom_row):
+                    cell.border += Border(bottom=thin)
+                cell.border += Border(left=thin, right=thin)
+
     workbook = Workbook()
     sheet = workbook.active
 
     top_row = 1
     for key_tuple, hosts in host_groups.items():
-        sheet.cell(row=top_row, column=2).value = 'Исходный пакет'
-        sheet.cell(row=top_row, column=3).value = 'Новая версия'
+        sheet.cell(row=top_row, column=1).value = 'Хосты'
+        sheet.cell(row=top_row, column=2).value = 'Удаленные пакеты'
+        sheet.cell(row=top_row, column=3).value = 'Установленные пакеты'
         row = top_row + 1
         for host in hosts:
             sheet.cell(row=row, column=1).value = host['host']
@@ -182,7 +193,9 @@ def output_xlsx(filename):
         for package in hosts[0]['installed']:
             sheet.cell(row=row, column=3).value = package
             row += 1
-        top_row += max(len(hosts), len(hosts[0]['installed']), len(hosts[0]['removed'])) + 2        
+        old_top_row = top_row
+        top_row += max(len(hosts), len(hosts[0]['installed']), len(hosts[0]['removed'])) + 2
+        set_border(sheet, f"A{old_top_row}:C{top_row - 2}", old_top_row, top_row - 2)
 
     dims = {}
     for row in sheet.rows:
@@ -191,9 +204,5 @@ def output_xlsx(filename):
                 dims[cell.column_letter] = max((dims.get(cell.column_letter, 0), len(str(cell.value)))) 
     for col, value in dims.items():
         sheet.column_dimensions[col].width = value + 5
-    workbook.save(filename="output.xlsx")
-output_xlsx('output.xlsx')
-
-for h in history:
-    del h['value']
-print(f"History({len(history)}):\n", history)
+    workbook.save(filename=filename)
+output_xlsx('report.xlsx')
