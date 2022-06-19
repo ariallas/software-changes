@@ -13,13 +13,14 @@ def parse_date(str):          return datetime.datetime.strptime(str, '%d.%m.%Y %
 
 # Read CMD arguments
 parser = ArgumentParser()
-parser.add_argument('group_id',  type=str, help='Zabbix group ID')
+# parser.add_argument('group_id',  type=str, help='Zabbix group ID')
 parser.add_argument('date_from', type=str, help='Start searching from this date')
 parser.add_argument('date_till', type=str, help='Search till this date')
+parser.add_argument('group_ids', nargs='+', type=str, help='List of Zabbix group IDs')
 args = parser.parse_args()
 
 try:
-    group_id = args.group_id
+    group_ids = args.group_ids
     date_till = parse_date(args.date_till)
     date_from = parse_date(args.date_from)
     pass
@@ -39,10 +40,9 @@ zabbix_server_url = config['params']['zabbix_server_url']
 zapi = ZabbixAPI(zabbix_server_url)
 zapi.login(login, password)
 
-hosts = zapi.host.get(groupids=group_id,
-                      output=['hostid'],
-                      monitored_hosts=True)
-print(f"Hosts with groupid {group_id} found: {len(hosts)}")
+hosts = zapi.host.get(groupids=group_ids,
+                      output=['hostid'])
+print(f"Hosts with groupids {group_ids} found: {len(hosts)}")
 
 # Abort if no hosts were found
 if len(hosts) == 0:
