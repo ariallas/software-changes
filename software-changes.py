@@ -42,7 +42,7 @@ zapi.login(login, password)
 
 hosts = zapi.host.get(groupids=group_ids,
                       output=['hostid'])
-print(f"Hosts with groupids {group_ids} found: {len(hosts)}")
+print(f"Hosts with groupids {group_ids}: {len(hosts)}")
 
 # Abort if no hosts were found
 if len(hosts) == 0:
@@ -57,6 +57,7 @@ items = zapi.item.get(hostids=host_ids,
                       with_triggers=True,
                       filter={ 'key_' : ['ubuntu.soft', 'system.sw.packages'] },
                       selectHosts=['host'])
+print(f"Items with triggers: {len(items)}")
 
 # For every itemid get its value history
 print(f"Searching for history items from {format_date(date_from)} to {format_date(date_till)}")
@@ -68,14 +69,19 @@ history = zapi.history.get(itemids=item_ids,
                            time_from=make_timestamp(date_from),
                            time_till=make_timestamp(date_till),
                            output=['itemid', 'clock', 'value'])
-print(f"History length: {len(history)}")
-if len(history) < len(item_ids):
-    print("History length is less than amount of hosts")
+if not history:
+    print('No history entries found')
     sys.exit()
 
+# Filter out items that have no history
+items_with_history_ids = set([h['itemid'] for h in history])
+items = [item for item in items if item['itemid'] in items_with_history_ids]
+print(f"Items with history: {len(items_with_history_ids)}")
+print(f"History length: {len(history)} Metric intervals: {len(history)//len(items_with_history_ids)}")
+
 # First batch of history results are newest software list, last batch is the oldest one. Ignoring everything inbetween
-new_packages = history[:len(item_ids)]
-old_packages = history[-len(item_ids):]
+new_packages = history[:len(items)]
+old_packages = history[-len(items):]
 # Sort them by itemid, so they are sorted the same way as items list
 new_packages.sort(key=lambda h: h['itemid'])
 old_packages.sort(key=lambda h: h['itemid'])
@@ -83,11 +89,10 @@ old_packages.sort(key=lambda h: h['itemid'])
 # We have all the data, now to combine it together
 # This assumes that all the lists are sorted in the same order (by itemid), which they SHOULD be
 hosts = []
-for index in range(len(item_ids)):
+for index in range(len(items)):
     if items[index]['itemid'] != new_packages[index]['itemid'] or \
        items[index]['itemid'] != old_packages[index]['itemid']:
-        print('Lists are not sorted properly')
-        print(items[index]['itemid'], new_packages[index]['itemid'], old_packages[index]['itemid'])
+        print('Lists are not sorted properly, aborting')
         sys.exit()
     host = {}
     host['hostid'] = items[index]['hostid']
