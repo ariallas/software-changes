@@ -72,48 +72,41 @@ history = zapi.history.get(itemids=item_ids,
 if not history:
     print('No history entries found')
     sys.exit()
-
-# Filter out items that have no history
-items_with_history_ids = set([h['itemid'] for h in history])
-items = [item for item in items if item['itemid'] in items_with_history_ids]
-print(f"Items with history: {len(items_with_history_ids)}")
-print(f"History length: {len(history)} Metric intervals: {len(history)//len(items_with_history_ids)}")
-
-# First batch of history results are newest software list, last batch is the oldest one. Ignoring everything inbetween
-new_packages = history[:len(items)]
-old_packages = history[-len(items):]
-# Sort them by itemid, so they are sorted the same way as items list
-new_packages.sort(key=lambda h: h['itemid'])
-old_packages.sort(key=lambda h: h['itemid'])
+print(f"History length: {len(history)}")
 
 # We have all the data, now to combine it together
-# This assumes that all the lists are sorted in the same order (by itemid), which they SHOULD be
 hosts = []
-for index in range(len(items)):
-    if items[index]['itemid'] != new_packages[index]['itemid'] or \
-       items[index]['itemid'] != old_packages[index]['itemid']:
-        print('Lists are not sorted properly, aborting')
-        sys.exit()
-    host = {}
-    host['hostid'] = items[index]['hostid']
-    host['host']   = items[index]['hosts'][0]['host']
-    host['itemid'] = items[index]['itemid']
-    host['clock']  = new_packages[index]['clock']
-    if items[index]['key_'] == 'ubuntu.soft':
-        host['new_packages'] = set(new_packages[index]['value'].split('\n'))
-        host['old_packages'] = set(old_packages[index]['value'].split('\n'))
-    else:                      # Assuming centOS alsways have [rpm] in front
-        host['new_packages'] = set( new_packages[index]['value'][6:].split(', ') )
-        host['old_packages'] = set( old_packages[index]['value'][6:].split(', ') )
+hosts_no_history = []
+for item in items:
+    host = {
+        'hostid': item['hostid'],
+        'host'  : item['hosts'][0]['host'],
+        'itemid': item['itemid'],
+        'clock' : item['lastclock'],
+    }
+    package_lists = [h['value'] for h in history if h['itemid'] == item['itemid']]
+    if package_lists:
+        newest_package_list = package_lists[0]
+        oldest_package_list = package_lists[-1]
+        if item['key_'] == 'ubuntu.soft':
+            host['new_packages'] = set(newest_package_list.split('\n'))
+            host['old_packages'] = set(oldest_package_list.split('\n'))
+        else:                      # Assuming centOS alsways have [rpm] in front
+            host['new_packages'] = set(newest_package_list[6:].split(', ') )
+            host['old_packages'] = set(oldest_package_list[6:].split(', ') )
     hosts.append(host)
 hosts.sort(key=lambda h: h['host'])
 
 # Compile lists of new and removed software via set differences
 for host in hosts:
-    installed = list(host['new_packages'] - host['old_packages'])
-    removed   = list(host['old_packages'] - host['new_packages'])
-    host['installed'] = sorted(installed)
-    host['removed']   = sorted(removed)
+    if 'new_packages' in host:
+        installed = list(host['new_packages'] - host['old_packages'])
+        removed   = list(host['old_packages'] - host['new_packages'])
+        host['installed'] = sorted(installed)
+        host['removed']   = sorted(removed)
+    else:
+        host['installed'] = ['No Data']
+        host['removed']   = ['No Data'] 
 
 # Compiling a dictionary to group up hosts with identical changes
 host_groups = {}
