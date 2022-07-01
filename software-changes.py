@@ -75,7 +75,6 @@ for host in hosts:
     else:
         host_item = host_items[0]
     filtered_items.append(host_item)
-    host['itemid'] = host_item['itemid']
 items = filtered_items
 print(f"Items with unique host: {len(items)}")
 
@@ -95,15 +94,11 @@ if not history:
 print(f"History length: {len(history)}")
 
 # We have all the data, now to combine it together
-hosts = []
-# hosts_no_history = []
-for item in items:
-    host = {
-        'hostid': item['hostid'],
-        'host'  : item['hosts'][0]['host'],
-        'itemid': item['itemid'],
-        'clock' : item['lastclock'],
-    }
+for host in hosts:
+    item = next((item for item in items if item['hostid'] == host['hostid']), None)
+    if not item:
+        continue
+    host['itemid'] = host_item['itemid']
     package_lists = [h['value'] for h in history if h['itemid'] == item['itemid']]
     if package_lists:
         newest_package_list = package_lists[0]
@@ -111,10 +106,10 @@ for item in items:
         if item['key_'] == 'ubuntu.soft':
             host['new_packages'] = set(newest_package_list.split('\n'))
             host['old_packages'] = set(oldest_package_list.split('\n'))
-        else:                      # Assuming centOS alsways have [rpm] in front
-            host['new_packages'] = set(newest_package_list[6:].split(', ') )
-            host['old_packages'] = set(oldest_package_list[6:].split(', ') )
-    hosts.append(host)
+        else: # Assuming centOS alsways have [...] in front
+            start = newest_package_list.find(']') + 2
+            host['new_packages'] = set(newest_package_list[start:].split(', ') )
+            host['old_packages'] = set(oldest_package_list[start:].split(', ') )
 hosts.sort(key=lambda h: h['host'])
 
 # Compile lists of new and removed software via set differences
@@ -126,16 +121,19 @@ for host in hosts:
         host['removed']   = sorted(removed)
     else:
         host['installed'] = ['No Data']
-        host['removed']   = ['No Data'] 
+        host['removed']   = ['No Data']
 
 # Compiling a dictionary to group up hosts with identical changes
 host_groups = {}
 for host in hosts:
     key_tuple = tuple(host['installed'] + host['removed'])
+    # Do not include hosts with no history or no changes in the output
+    # if not key_tuple or key_tuple[0] == 'No Data':
+    #     continue
     if not key_tuple in host_groups.keys():
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
-
+print(f"Total groups of changes: {len(host_groups)}")
 
 # Output to a .txt file
 def output_txt(filename):

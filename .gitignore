@@ -1,5 +1,5 @@
 config.ini
-config - Copy.ini
+config.ini*
 *.txt
 *.xlsx
 .vscode/
