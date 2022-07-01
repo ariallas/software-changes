@@ -5,6 +5,8 @@ from argparse import ArgumentParser
 import configparser
 import datetime
 import sys
+import urllib3
+import requests
 
 def make_timestamp(time):     return int(time.timestamp())
 def make_datetime(timestamp): return datetime.datetime.fromtimestamp(timestamp)
@@ -37,10 +39,14 @@ password = config['credentials']['password']
 zabbix_server_url = config['params']['zabbix_server_url']
 
 # Inialize API access
-zapi = ZabbixAPI(zabbix_server_url)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+s = requests.Session()
+s.verify = False
+zapi = ZabbixAPI(zabbix_server_url, s)
 zapi.login(login, password)
 
 hosts = zapi.host.get(groupids=group_ids,
+                      monitored_hosts=True,
                       output=['hostid'])
 print(f"Hosts with groupids {group_ids}: {len(hosts)}")
 
@@ -54,7 +60,7 @@ host_ids = [ h['hostid'] for h in hosts ]
 items = zapi.item.get(hostids=host_ids,
                       output=['hostid', 'lastclock', 'key_'],
                       sortfield='itemid',
-                      with_triggers=True,
+                      monitored=True,
                       filter={ 'key_' : ['ubuntu.soft', 'system.sw.packages'] },
                       selectHosts=['host'])
 print(f"Items with triggers: {len(items)}")
