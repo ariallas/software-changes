@@ -15,7 +15,6 @@ def parse_date(str):          return datetime.datetime.strptime(str, '%d.%m.%Y %
 
 # Read CMD arguments
 parser = ArgumentParser()
-# parser.add_argument('group_id',  type=str, help='Zabbix group ID')
 parser.add_argument('date_from', type=str, help='Start searching from this date')
 parser.add_argument('date_till', type=str, help='Search till this date')
 parser.add_argument('group_ids', nargs='+', type=str, help='List of Zabbix group IDs')
@@ -38,7 +37,7 @@ login = config['credentials']['login']
 password = config['credentials']['password']
 zabbix_server_url = config['params']['zabbix_server_url']
 
-# Inialize API access
+# Inialize API access, disable SSL verification
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 s = requests.Session()
 s.verify = False
@@ -47,8 +46,8 @@ zapi.login(login, password)
 
 hosts = zapi.host.get(groupids=group_ids,
                       monitored_hosts=True,
-                      output=['hostid'])
-print(f"Hosts with groupids {group_ids}: {len(hosts)}")
+                      output=['hostid', 'host'])
+print(f"Monitored hosts with groupids {group_ids}: {len(hosts)}")
 
 # Abort if no hosts were found
 if len(hosts) == 0:
@@ -63,10 +62,25 @@ items = zapi.item.get(hostids=host_ids,
                       monitored=True,
                       filter={ 'key_' : ['ubuntu.soft', 'system.sw.packages'] },
                       selectHosts=['host'])
-print(f"Items with triggers: {len(items)}")
+print(f"Enabled items: {len(items)}")
+
+# Filtering out items if there are more than one for a single host
+filtered_items = []
+for host in hosts:
+    host_items = [item for item in items if item['hostid'] == host['hostid']]
+    if not host_items:
+        continue
+    elif len(host_items) > 1:
+        host_item = next(item for item in host_items if item['key_'] == 'ubuntu.soft')
+    else:
+        host_item = host_items[0]
+    filtered_items.append(host_item)
+    host['itemid'] = host_item['itemid']
+items = filtered_items
+print(f"Items with unique host: {len(items)}")
 
 # For every itemid get its value history
-print(f"Searching for history items from {format_date(date_from)} to {format_date(date_till)}")
+print(f"Searching for history from {format_date(date_from)} to {format_date(date_till)}")
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
                            history=4,
@@ -82,7 +96,7 @@ print(f"History length: {len(history)}")
 
 # We have all the data, now to combine it together
 hosts = []
-hosts_no_history = []
+# hosts_no_history = []
 for item in items:
     host = {
         'hostid': item['hostid'],
