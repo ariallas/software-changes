@@ -65,10 +65,12 @@ events = zapi.event.get(time_from=make_timestamp(event_from),
                         filter={'name':'Произошли изменения в пакетах, установленных в системе'},
                         selectHosts=['host'])
 # List of hosts with software changes
-changed_hosts = [ t['hosts'][0] for t in events ]
+hosts = [ t['hosts'][0] for t in events ]
+# Filter out potential duplicates
+hosts = list({host['hostid']:host for host in hosts}.values())
 
 # Abort if no events were found
-if len(events) == 0:
+if len(hosts) == 0:
     print("Completed succesfully: No software update events found")
     sys.exit()
 
@@ -77,7 +79,7 @@ latest_event_time = make_datetime(int(events[0]['clock']))
 oldest_event_time = make_datetime(int(events[-1]['clock']))
 
 # For every host get corresponding itemid for its software list
-host_ids = [ h['hostid'] for h in changed_hosts ]
+host_ids = [ h['hostid'] for h in hosts ]
 host_ids = list(set(host_ids)) # Remove duplicate hosts
 print(f"Alert count: {len(events)}    Unique hosts count: {len(host_ids)}")
 
