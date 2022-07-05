@@ -5,10 +5,13 @@ import configparser
 import datetime
 import pathlib
 import sys
+import urllib3
+import requests
 
 def make_timestamp(time):     return int(time.timestamp())
 def make_datetime(timestamp): return datetime.datetime.fromtimestamp(timestamp)
 def format_date(date):        return date.strftime('%d.%m %H:%M')
+def parse_date(str):          return datetime.datetime.strptime(str, '%d.%m.%Y %H:%M')
 
 # Delete previous reports if they exist
 file = pathlib.Path("report.txt", missing_ok=True)
@@ -26,15 +29,18 @@ zabbix_server_url = config['params']['zabbix_server_url']
 search_interval   = config.getint('params', 'search_interval')
 metric_interval   = config.getint('params', 'metric_interval')
 
-# Inialize API access
-zapi = ZabbixAPI(zabbix_server_url)
+# Inialize API access, disable SSL verification
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+s = requests.Session()
+s.verify = False
+zapi = ZabbixAPI(zabbix_server_url, s)
 zapi.login(login, password)
 
 # Date from which to start searching for trigger events (backwards in time)
 time_till = datetime.datetime.now()
 
 # These are for tests
-# time_till = datetime.datetime.strptime('28.05.2022 10:10', '%d.%m.%Y %H:%M')
+time_till = datetime.datetime.strptime('03.07.2022 10:10', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('27.05.2022 10:10', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
