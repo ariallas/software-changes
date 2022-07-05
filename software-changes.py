@@ -40,7 +40,7 @@ zapi.login(login, password)
 time_till = datetime.datetime.now()
 
 # These are for tests
-time_till = datetime.datetime.strptime('03.07.2022 10:10', '%d.%m.%Y %H:%M')
+# time_till = datetime.datetime.strptime('26.06.2022 10:10', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('27.05.2022 10:10', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 17:20', '%d.%m.%Y %H:%M')
 # time_till = datetime.datetime.strptime('26.05.2022 05:20', '%d.%m.%Y %H:%M')
@@ -77,84 +77,90 @@ if len(hosts) == 0:
 # Latest and oldest event timestamps, will be the same if its only one batch
 latest_event_time = make_datetime(int(events[0]['clock']))
 oldest_event_time = make_datetime(int(events[-1]['clock']))
+# Dates for history search
+date_from = oldest_event_time - datetime.timedelta(hours=metric_interval + 1)
+date_till = latest_event_time + datetime.timedelta(minutes=15)
 
 # For every host get corresponding itemid for its software list
 host_ids = [ h['hostid'] for h in hosts ]
-host_ids = list(set(host_ids)) # Remove duplicate hosts
-print(f"Alert count: {len(events)}    Unique hosts count: {len(host_ids)}")
-
 items = zapi.item.get(hostids=host_ids,
                       output=['hostid', 'lastclock', 'key_'],
                       sortfield='itemid',
-                      with_triggers=True,
+                      monitored=True,
                       filter={ 'key_' : ['ubuntu.soft', 'system.sw.packages'] },
                       selectHosts=['host'])
+print(f"Enabled items: {len(items)}")
+
+# Filtering out items if there are more than one for a single host
+filtered_items = []
+for host in hosts:
+    host_items = [item for item in items if item['hostid'] == host['hostid']]
+    if not host_items:
+        continue
+    elif len(host_items) > 1:
+        host_item = next(item for item in host_items if item['key_'] == 'ubuntu.soft')
+    else:
+        host_item = host_items[0]
+    filtered_items.append(host_item)
+items = filtered_items
+print(f"Items with unique host: {len(items)}")
 
 # For every itemid get its value history
-history_from = oldest_event_time - datetime.timedelta(hours=metric_interval + 1)
-print(f"Searching for history items from {format_date(history_from)} to {format_date(latest_event_time)}")
+print(f"Searching for history from {format_date(date_from)} to {format_date(date_till)}")
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
                            history=4,
                            sortfield='clock',
                            sortorder='DESC',
-                           time_from=make_timestamp(history_from),
-                           time_till=make_timestamp(latest_event_time) + 1000,
+                           time_from=make_timestamp(date_from),
+                           time_till=make_timestamp(date_till),
                            output=['itemid', 'clock', 'value'])
-print(f"History length: {len(history)}")
-if len(history) < len(item_ids):
-    print("Error: History length is less than amount of hosts, aborting")
+if not history:
+    print('No history entries found')
     sys.exit()
-
-# First batch of history results are newest software list, last batch is the oldest one. Ignoring everything inbetween
-new_packages = history[:len(item_ids)]
-old_packages = history[-len(item_ids):]
-# Sort them by itemid, so they are sorted the same way as items list
-new_packages.sort(key=lambda h: h['itemid'])
-old_packages.sort(key=lambda h: h['itemid'])
+print(f"History length: {len(history)}")
 
 # We have all the data, now to combine it together
-# This assumes that all the lists are sorted in the same order (by itemid), which they SHOULD be
-hosts = []
-for index in range(len(item_ids)):
-    if items[index]['itemid'] != new_packages[index]['itemid'] or \
-       items[index]['itemid'] != old_packages[index]['itemid']:
-        print('Error: Lists are not sorted properly, aborting')
-        print(items[index]['itemid'], new_packages[index]['itemid'], old_packages[index]['itemid'])
-        sys.exit()
-    host = {}
-    host['hostid'] = items[index]['hostid']
-    host['host']   = items[index]['hosts'][0]['host']
-    host['itemid'] = items[index]['itemid']
-    host['clock']  = new_packages[index]['clock']
-    if items[index]['key_'] == 'ubuntu.soft':
-        host['new_packages'] = set(new_packages[index]['value'].split('\n'))
-        host['old_packages'] = set(old_packages[index]['value'].split('\n'))
-    else:                      # Assuming centOS alsways have [rpm] in front
-        host['new_packages'] = set( new_packages[index]['value'][6:].split(', ') )
-        host['old_packages'] = set( old_packages[index]['value'][6:].split(', ') )
-    hosts.append(host)
-# hosts.sort(key=lambda h: h['clock'], reverse=True) # This sorts the same way as in Zabbix
+for host in hosts:
+    item = next((item for item in items if item['hostid'] == host['hostid']), None)
+    if not item:
+        continue
+    host['itemid'] = host_item['itemid']
+    package_lists = [h['value'] for h in history if h['itemid'] == item['itemid']]
+    if package_lists:
+        newest_package_list = package_lists[0]
+        oldest_package_list = package_lists[-1]
+        if item['key_'] == 'ubuntu.soft':
+            host['new_packages'] = set(newest_package_list.split('\n'))
+            host['old_packages'] = set(oldest_package_list.split('\n'))
+        else: # Assuming centOS alsways have [...] in front
+            start = newest_package_list.find(']') + 2
+            host['new_packages'] = set(newest_package_list[start:].split(', ') )
+            host['old_packages'] = set(oldest_package_list[start:].split(', ') )
 hosts.sort(key=lambda h: h['host'])
 
 # Compile lists of new and removed software via set differences
 for host in hosts:
-    installed = list(host['new_packages'] - host['old_packages'])
-    removed   = list(host['old_packages'] - host['new_packages'])
-    host['installed'] = sorted(installed)
-    host['removed']   = sorted(removed)
+    if 'new_packages' in host:
+        installed = list(host['new_packages'] - host['old_packages'])
+        removed   = list(host['old_packages'] - host['new_packages'])
+        host['installed'] = sorted(installed)
+        host['removed']   = sorted(removed)
+    else:
+        host['installed'] = ['No Data']
+        host['removed']   = ['No Data']
 
 # Compiling a dictionary to group up hosts with identical changes
 host_groups = {}
 for host in hosts:
     key_tuple = tuple(host['installed'] + host['removed'])
-    if not len(key_tuple):
-        print(f"No changes found for host {host['host']}")
-        continue
+    # Do not include hosts with no history or no changes in the output
+    # if not key_tuple or key_tuple[0] == 'No Data':
+    #     continue
     if not key_tuple in host_groups.keys():
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
-
+print(f"Total groups of changes: {len(host_groups)}")
 
 # Output to a .txt file
 def output_txt(filename):
@@ -219,6 +225,4 @@ def output_xlsx(filename):
         sheet.column_dimensions[col].width = value + 5
     workbook.save(filename=filename)
 output_xlsx('report.xlsx')
-
 print("Completed succesfully")
-print(f"Изменение ПО в ВИФИД {latest_event_time.strftime('%d.%m')} за последние 24 часа")
