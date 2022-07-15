@@ -15,16 +15,11 @@ def parse_date(str):          return datetime.datetime.strptime(str, '%d.%m.%Y %
 
 # Read CMD arguments
 parser = ArgumentParser()
-parser.add_argument('date_from', type=str, help='Start searching from this date')
 parser.add_argument('date_till', type=str, help='Search till this date')
-parser.add_argument('group_ids', nargs='+', type=str, help='List of Zabbix group IDs')
 args = parser.parse_args()
 
 try:
-    group_ids = args.group_ids
     date_till = parse_date(args.date_till)
-    date_from = parse_date(args.date_from)
-    pass
 except ValueError as e:
     print(e)
     print("Date must be in DD.MM.YYYY HH:MM format")
@@ -44,10 +39,10 @@ s.verify = False
 zapi = ZabbixAPI(zabbix_server_url, s)
 zapi.login(login, password)
 
-hosts = zapi.host.get(groupids=group_ids,
+hosts = zapi.host.get(#groupids=group_ids,
                       monitored_hosts=True,
                       output=['hostid', 'host'])
-print(f"Monitored hosts with groupids {group_ids}: {len(hosts)}")
+print(f"Monitored hosts: {len(hosts)}")
 
 # Abort if no hosts were found
 if len(hosts) == 0:
@@ -79,6 +74,7 @@ items = filtered_items
 print(f"Items with unique host: {len(items)}")
 
 # For every itemid get its value history
+date_from = date_till - datetime.timedelta(hours=18 + 1)
 print(f"Searching for history from {format_date(date_from)} to {format_date(date_till)}")
 item_ids = [ i['itemid'] for i in items ]
 history = zapi.history.get(itemids=item_ids,
@@ -119,21 +115,23 @@ for host in hosts:
         removed   = list(host['old_packages'] - host['new_packages'])
         host['installed'] = sorted(installed)
         host['removed']   = sorted(removed)
+        host['newest_software_lsit'] = sorted(list(host['new_packages']))
     else:
         host['installed'] = ['No Data']
         host['removed']   = ['No Data']
+        host['newest_software_lsit'] = ['No Data']
 
 # Compiling a dictionary to group up hosts with identical changes
 host_groups = {}
 for host in hosts:
-    key_tuple = tuple(host['installed'] + host['removed'])
+    key_tuple = tuple(host['newest_software_lsit'])
     # Do not include hosts with no history or no changes in the output
     # if not key_tuple or key_tuple[0] == 'No Data':
     #     continue
     if not key_tuple in host_groups.keys():
         host_groups[key_tuple] = []
     host_groups[key_tuple].append(host)
-print(f"Total groups of changes: {len(host_groups)}")
+print(f"Total groups of hosts with same software: {len(host_groups)}")
 
 # Output to a .txt file
 def output_txt(filename):
@@ -142,15 +140,12 @@ def output_txt(filename):
             for host in hosts:
                 print(host['host'], file=f)
             host = hosts[0]
-            if host['installed']:
-                print("\nNew packages:", file=f)
-                for new_package in host['installed']:
-                    print(new_package, file=f)
-            if host['removed']:
-                print("\nRemoved packages:", file=f)
-                for removed_package in host['removed']:
-                    print(removed_package, file=f)
-            print('------------------------------------------', file=f)
+            if host['newest_software_lsit']:
+                print("\nPackages:", file=f)
+                for new_package in host['newest_software_lsit']:
+                    print(new_package, file=f, end='')
+                print('', file=f)
+            print('----------------------------------------------------------------------------------------', file=f)
 output_txt('report.txt')
 
 # Output to an .xlsx table
@@ -161,7 +156,7 @@ def output_xlsx(filename):
             for cell in row:
                 if cell.row == bottom_row:
                     cell.border += Border(top=thin)
-                if cell.row in (top_row, bottom_row):
+                if cell.row == top_row:
                     cell.border += Border(bottom=thin)
                 cell.border += Border(left=thin, right=thin)
 
@@ -170,24 +165,27 @@ def output_xlsx(filename):
 
     top_row = 1
     for key_tuple, hosts in host_groups.items():
-        sheet.cell(row=top_row, column=1).value = 'Хосты'
-        sheet.cell(row=top_row, column=2).value = 'Удаленные пакеты'
-        sheet.cell(row=top_row, column=3).value = 'Установленные пакеты'
-        row = top_row + 1
+        # sheet.cell(row=top_row, column=1).value = 'Хосты'
+        # sheet.cell(row=top_row, column=2).value = 'Пакеты'
+        row = top_row
         for host in hosts:
             sheet.cell(row=row, column=1).value = host['host']
             row += 1
-        row = top_row + 1
-        for package in hosts[0]['removed']:
-            sheet.cell(row=row, column=2).value = package
-            row += 1
-        row = top_row + 1
-        for package in hosts[0]['installed']:
-            sheet.cell(row=row, column=3).value = package
-            row += 1
+
+        # row = top_row + 1
+        # for package in hosts[0]['newest_software_lsit']:
+        #     sheet.cell(row=row, column=2).value = package
+        #     row += 1
+
+        package_list = ''
+        for package in hosts[0]['newest_software_lsit']:
+            package_list += package + ', '
+        package_list = package_list[:-2]
+        sheet.cell(row=top_row, column=2).value = package_list
+
         old_top_row = top_row
-        top_row += max(len(hosts), len(hosts[0]['installed']), len(hosts[0]['removed'])) + 2
-        set_border(sheet, f"A{old_top_row}:C{top_row - 2}", old_top_row, top_row - 2)
+        top_row += max(len(hosts), 1)
+        set_border(sheet, f"A{old_top_row}:B{top_row - 1}", old_top_row, top_row - 1)
 
     dims = {}
     for row in sheet.rows:
